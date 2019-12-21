@@ -13,10 +13,10 @@ import pandas as pd
 from visdom import Visdom
 import matplotlib.pyplot as plt
 
-# __all__ = ['VDE']
+__all__ = ['ts_model']
 
 LR = 0.001
-EPOCHS = 4
+EPOCHS = 30
 BATCH = 32
 WINDOWS_LENGTH = 24
 HIDDEN_SIZE = 64
@@ -37,6 +37,12 @@ def get_samples(dataset, in_seq_len, pred_len):
         samples.append([train_data, target_data])
 
     return np.array(samples)
+
+
+def divide_train_test(dataset, rate=0.75):
+    train_size = int(dataset.shape[0] * rate)
+    train, test = dataset[0:train_size], dataset[train_size:]
+    return train, test
 
 
 class get_dataset(Dataset):
@@ -97,7 +103,7 @@ class ts_model(object):
                  net="LSTM", rnn_input_size=RNN_INPUT_FEATURES, rnn_hid_size=HIDDEN_SIZE,
                  batch_size=BATCH, lr=LR, n_epochs=EPOCHS, optimizer="Adam", criterion="MSELoss",
                  train_proportion=TRAIN_PROP,
-                 not_use_visdom=True, cuda=True, dropout_rate=0.5, verbose=True):
+                 not_use_visdom=False, cuda=True, dropout_rate=0.5, verbose=False):
         self.wnd_len = wnd_len
         self.pred_len = pred_len
         self.net = net
@@ -129,6 +135,10 @@ class ts_model(object):
 
         self.best_model = None
         self.min_loss = 999.99
+        if not not_use_visdom:
+            self.viz = Visdom()
+            self.viz.line([[0., 0.]], [0.], win="train_loss", opts=dict(title="train loss ,val loss",
+                                                                        legend=["train loss", "val loss"]))
 
     def __train(self, train_loader, val_loader):
         self.model.train()
@@ -136,7 +146,6 @@ class ts_model(object):
         for train_batch_idx, (b_train, b_target) in enumerate(train_loader):
             b_train = b_train.to(self.device)
             b_target = b_target.to(self.device)
-            # print("b_train shape={}".format(b_train.shape))
             out_seq = self.model(b_train)
             loss = self.criterion(b_target, out_seq)
             self.optimizer.zero_grad()
@@ -177,10 +186,7 @@ class ts_model(object):
             return epoch_loss
 
     def fit(self, train_data):
-        if not self.not_use_visdom:
-            viz = Visdom()
-            viz.line([[0., 0.]], [0.], win="train_loss", opts=dict(title="train loss ,val loss",
-                                                                   legend=["train loss", "val loss"]))
+
         train_samples = int(train_data.shape[0] * self.train_proportion)
         train_loader = DataLoader(dataset=get_dataset(get_samples(train_data[:train_samples],
                                                                   self.wnd_len, self.pred_len)),
@@ -192,6 +198,9 @@ class ts_model(object):
             train_loss, val_loss = self.__train(train_loader, val_loader)
             if self.verbose:
                 print('Epoch: {},train loss={},val loss={}'.format(i, train_loss, val_loss))
+            if not self.not_use_visdom:
+                self.viz.line([[train_loss], [val_loss]],
+                              [i], win="train_loss", update="append")
         self.is_fitted = True
 
     def transform(self, test_data):
@@ -205,14 +214,10 @@ class ts_model(object):
             self.model.eval()
             with torch.no_grad():
                 for i in range(0, data_len, self.wnd_len):
-                    # print("i={}".format(i))
-                    # print("i + self.wnd_len + self.pred_len={}".format(i + self.wnd_len + self.pred_len))
-                    # print("data_len={}".format(data_len))
-                    if i + self.wnd_len + self.pred_len-1 < data_len:
-                        print("我进来了")
+                    if i + self.wnd_len + self.pred_len - 1 < data_len:
                         interval_seq = test_data[i:i + self.wnd_len]
-                        interval_seq = torch.from_numpy(interval_seq).float().to(self.device)
-                        preds.extend(self.model(interval_seq).numpy().reshape(-1, 1))
+                        interval_seq = torch.from_numpy(interval_seq).float().unsqueeze_(0).to(self.device)
+                        preds.extend(self.model(interval_seq).cpu().numpy().reshape(-1, 1))
                         reals.extend(test_data[i + self.wnd_len:
                                                i + self.wnd_len + self.pred_len - 1])
         else:
@@ -233,12 +238,16 @@ class ts_model(object):
         plt.legend(loc="best")
         plt.show()
 
+    def get_min_loss(self):
+        return self.min_loss
+
 
 if __name__ == '__main__':
-    train_file_path = r"D:\experiment\the_ip_bytes_hour.csv"
-    data = pd.read_csv(train_file_path, header=0, index_col=0)["flows_sum"].values
-    training = data[:-24]
-    test = data[-48:]
+    train_file_path = r"dataset/pollution.csv"
+    #select_features = ["pollution", "dew", "press", "wnd_spd"]
+    data = pd.read_csv(train_file_path, header=0, index_col=0)["pollution"].values
+    train_data, test_data =divide_train_test(data)
     ts = ts_model()
-    preds, reals = ts.fit_transform(training, test)
+    preds, reals = ts.fit_transform(train_data, test_data)
     ts.plot_predict_result(preds, reals)
+    print("min loss={}".format(ts.get_min_loss()))
