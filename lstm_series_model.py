@@ -23,8 +23,7 @@ class lstm_model(nn.Module):
         self.apply(initialize_weights)
 
     def forward(self, x):
-        emb = self.drop(self.encoder(x.reshape(-1, self.enc_inpt_size)))  # 先不加dropout
-        print(emb.shape)！！！！！！
+        emb = self.drop(self.encoder(x.reshape(-1, self.enc_inpt_size)))  #batch,seql_len
         emb = emb.reshape(x.shape[0], x.shape[1], self.rnn_inpt_size)
         if self.net == "LSTM":
             _, (h_n, _) = self.hidden_layer(emb)
