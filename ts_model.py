@@ -12,6 +12,7 @@ from lstm_series_model import lstm_model
 import pandas as pd
 from visdom import Visdom
 import matplotlib.pyplot as plt
+from sklearn.preprocessing import MinMaxScaler
 
 __all__ = ['ts_model']
 
@@ -28,8 +29,6 @@ TRAIN_PROP = 0.8
 
 def get_samples(dataset, in_seq_len, pred_len):
     samples = []
-    smin = dataset.min(axis=0)
-    dataset = (dataset - smin) / (dataset.max(axis=0) - smin + 1e-6)
     step = 1
     for i in range(0, dataset.shape[0] - 1 - in_seq_len - pred_len, step):
         train_data = dataset[i:i + in_seq_len]
@@ -103,7 +102,7 @@ class ts_model(object):
                  net="LSTM", rnn_input_size=RNN_INPUT_FEATURES, rnn_hid_size=HIDDEN_SIZE,
                  batch_size=BATCH, lr=LR, n_epochs=EPOCHS, optimizer="Adam", criterion="MSELoss",
                  train_proportion=TRAIN_PROP,
-                 not_use_visdom=False, cuda=True, dropout_rate=0.5, verbose=False):
+                 not_use_visdom=True, cuda=True, dropout_rate=0.5, verbose=True):
         self.wnd_len = wnd_len
         self.pred_len = pred_len
         self.net = net
@@ -132,7 +131,7 @@ class ts_model(object):
         else:
             raise ValueError("Not a recognized loss function")
         self.is_fitted = False
-
+        self.scaler = MinMaxScaler(feature_range=(0, 1))
         self.best_model = None
         self.min_loss = 999.99
         if not not_use_visdom:
@@ -186,7 +185,7 @@ class ts_model(object):
             return epoch_loss
 
     def fit(self, train_data):
-
+        train_data = self.scaler.fit_transform(train_data.reshape(-1,1))
         train_samples = int(train_data.shape[0] * self.train_proportion)
         train_loader = DataLoader(dataset=get_dataset(get_samples(train_data[:train_samples],
                                                                   self.wnd_len, self.pred_len)),
@@ -204,9 +203,9 @@ class ts_model(object):
         self.is_fitted = True
 
     def transform(self, test_data):
+
         if self.is_fitted:
-            test_min = test_data.min(axis=0)
-            test_data = (test_data - test_min) / (test_data.max(axis=0) - test_min + 1e-6)
+            test_data = self.scaler.fit_transform(test_data.reshape(-1,1))
             preds = []
             reals = []
             data_len = test_data.shape[0]
@@ -217,9 +216,12 @@ class ts_model(object):
                     if i + self.wnd_len + self.pred_len - 1 < data_len:
                         interval_seq = test_data[i:i + self.wnd_len]
                         interval_seq = torch.from_numpy(interval_seq).float().unsqueeze_(0).to(self.device)
-                        preds.extend(self.model(interval_seq).cpu().numpy().reshape(-1, 1))
-                        reals.extend(test_data[i + self.wnd_len:
-                                               i + self.wnd_len + self.pred_len - 1])
+                        interval_preds = self.model(interval_seq).cpu().numpy().reshape(-1, 1)
+                        interval_preds = self.scaler.inverse_transform(interval_preds)
+                        interval_reals = test_data[i + self.wnd_len:i + self.wnd_len + self.pred_len]
+                        interval_reals = self.scaler.inverse_transform(interval_reals)
+                        preds.extend(interval_preds)
+                        reals.extend(interval_reals)
         else:
             raise RuntimeError("Model needs to be fit.")
         return preds, reals
@@ -244,9 +246,9 @@ class ts_model(object):
 
 if __name__ == '__main__':
     train_file_path = r"dataset/pollution.csv"
-    #select_features = ["pollution", "dew", "press", "wnd_spd"]
+    # select_features = ["pollution", "dew", "press", "wnd_spd"]
     data = pd.read_csv(train_file_path, header=0, index_col=0)["pollution"].values
-    train_data, test_data =divide_train_test(data)
+    train_data, test_data = divide_train_test(data)
     ts = ts_model()
     preds, reals = ts.fit_transform(train_data, test_data)
     ts.plot_predict_result(preds, reals)
