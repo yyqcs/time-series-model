@@ -1,10 +1,26 @@
 ### This repository encapsulates the process of modeling and forecasting of time series based deep learning,making it super easy  to use.
 
+### Quick start
+
+```python
+train_file_path = r"dataset/pollution.csv"
+#data is univariate tite series
+data = pd.read_csv(train_file_path, header=0, index_col=0)["pollution"].values
+#get train_data and test_data
+train_data, test_data = divide_train_test(data)
+#initialise model parameters
+ts = ts_model()
+# fit and predict
+preds, reals = ts.fit_transform(train_data, test_data)
+# plot prediction result
+ts.plot_predict_result(preds, reals)
+```
+
 #### 1. model parameters
 
 Some model parameters are diagrammed below：
 
-![model-part-parameters](.\fig\model-part-parameters.jpg)
+![model-part-parameters](https://github.com/yyqcs/time-series-model/blob/master/fig/model-part-parameters.jpg)
 
 | The meaning of model parameters                              |
 | ------------------------------------------------------------ |
